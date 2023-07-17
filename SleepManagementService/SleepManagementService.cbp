@@ -33,7 +33,6 @@
 			<Add option="-fexceptions" />
 		</Compiler>
 		<Unit filename="globals.cpp" />
-		<Unit filename="guestList.cpp" />
 		<Unit filename="main.cpp" />
 		<Extensions />
 	</Project>

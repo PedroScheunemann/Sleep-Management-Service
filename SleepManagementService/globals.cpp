@@ -10,13 +10,13 @@ using namespace std;
 //#include <csignal>
 //#include <ifaddrs.h>
 //#include <cstdio>
-//#include <sys/types.h>
-//#include <sys/socket.h>
+#include <sys/types.h>
+#include <sys/socket.h>
 //#include <netinet/in.h>
 //#include <arpa/inet.h>
 //#include <unistd.h>
 //#include <cstdlib>
-//#include <mutex>
+#include <mutex>
 
 #define PORT_DISCOVERY_SERVICE   8000
 #define PORT_MONITORING_SERVICE  8001
@@ -50,7 +50,6 @@ class guestTable{
 
         void addGuest(guest g)
         {
-            g.status = "awake";
             guestList.insert_or_assign(g.ip_address, g);
         }
 
@@ -88,6 +87,7 @@ class guestTable{
         }
 };
 
-
+pthread_mutex_t mutex_table = PTHREAD_MUTEX_INITIALIZER;
+guestTable guests;
 
 
