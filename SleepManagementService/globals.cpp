@@ -7,16 +7,18 @@ using namespace std;
 #include <list>
 #include <map>
 #include <iomanip>
+#include <mutex>
+//#include <sys/types.h>
+//#include <sys/socket.h>
+
 //#include <csignal>
 //#include <ifaddrs.h>
 //#include <cstdio>
-#include <sys/types.h>
-#include <sys/socket.h>
 //#include <netinet/in.h>
 //#include <arpa/inet.h>
 //#include <unistd.h>
 //#include <cstdlib>
-#include <mutex>
+
 
 #define PORT_DISCOVERY_SERVICE   8000
 #define PORT_MONITORING_SERVICE  4000
@@ -28,13 +30,6 @@ using namespace std;
 #define STATUS_REQUEST           "sleep status needed"
 #define STATUS_AWAKE             "sleep status awake"
 #define STATUS_QUIT              "sleep status quit"
-
-// Variáveis para o manager
-pthread_mutex_t mutex_table = PTHREAD_MUTEX_INITIALIZER;
-guestTable guests;
-
-// Variáveis para o participante
-int current_guest_is_out = 0;
 
 struct packet {
     uint16_t type;
@@ -78,28 +73,35 @@ class guestTable{
         list<string> returnGuestsIpAdress()
         {
             list<string> list_ip_addresses = {};
-            for(map<string, guest>::iterator it = guestList.begin(); it != guestList.end(); ++it)
-            {
-                 list_ip_addresses.insert(it->first);
+            map<string, guest>::iterator it = guestList.begin();
+            for (auto &i: guestList) {
+                list_ip_addresses.insert(it, i.first);
             }
             return list_ip_addresses;
         }
 
         void printTable() {
             //system("clear");
-            cout << std::left;
+            cout << left;
             cout << "--------------------------------------------------------------------------\n";
             cout << "|Hostname \t|MAC Address      |IP Address     |Status|\n";
-            for (auto &ent: guestList) {
-                cout << "|" << setw(15) << ent.second.hostname;
-                cout << "|" << ent.second.mac_address;
-                cout << "|" << setw(15) << ent.second.ip_address;
-                cout << "|" << setw(6) << ent.second.status << "|\n";
+            for(auto &i: guestList)
+            {
+                cout << "|" << setw(15) << i.second.hostname;
+                cout << "|" << i.second.mac_address;
+                cout << "|" << setw(15) << i.second.ip_address;
+                cout << "|" << setw(6) << i.second.status << "|\n";
             }
             cout << "--------------------------------------------------------------------------\n";
         }
 };
 
+// Variáveis para o manager
+pthread_mutex_t mutex_table = PTHREAD_MUTEX_INITIALIZER;
+guestTable guests;
 
+// Variáveis para o participante
+pthread_mutex_t mutex_guest_out = PTHREAD_MUTEX_INITIALIZER;
+int current_guest_is_out = 0;
 
 

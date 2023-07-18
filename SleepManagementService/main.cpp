@@ -277,8 +277,19 @@ void* guest_monitoring_service(void *arg)
 // TO DO: Fica processando a entrada do usuário pra ver se vai vir um pedido de EXIT
 void* guest_interface_service(void *arg)
 {
-
-    // current_guest_is_out = 1;
+    string input;
+    cout << "To quit the service type EXIT." << endl;
+    cin >> input;
+    if (strcmp(input, "EXIT") == 0)
+    {
+        cout << current_guest_is_out << endl;
+        // Garantindo acesso exclusivo a tabela
+        pthread_mutex_lock(&mutex_guest_out);
+        current_guest_is_out = 1;
+        pthread_mutex_unlock(&mutex_guest_out);
+        cout << current_guest_is_out << endl;
+        exit(0);
+    }
 }
 
 // Recebendo e respondendo pacotes do tipo SLEEP SERVICE DISCOVERY que chegaram através de broadcast.
@@ -463,26 +474,115 @@ void* manager_monitoring_service(void *arg)
 // TO DO: Fica processando a entrada do usuário pra ver se vai vir um pedido de WAKEUP hostname -> wake on lan
 void* manager_interface_service(void *arg)
 {
-
+    string input;
+    cout << "To wake a participant type WAKE <mac_address>." << endl;
+    cin >> input;
+    if (strcmp(input.substr(0, input.find(" ")), "WAKE") == 0)
+    {
+        // wake on lan no participante
+    }
     return nullptr;
 }
 
-// TO DO: pega o nome do host
 string get_host_name()
 {
-
+    char hostname[256];
+    if (gethostname(hostname, sizeof(hostname)) == 0)
+    {
+        cout << "Hostname: " << hostname << endl;
+        return string(hostname);
+    }
+    else
+    {
+        cerr << "Failed to get hostname." << endl;
+        return ""; // Returning an empty string to indicate failure
+    }
 }
 
-// TO DO: pega o endereço mac do host
 string get_mac_address()
 {
+    struct ifreq ifr;
+    struct ifconf ifc;
+    char buf[1024];
 
+    int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
+    if (sock == -1)
+    {
+        cerr << "Failed to create socket." << endl;
+        return "";
+    }
+
+    ifc.ifc_len = sizeof(buf);
+    ifc.ifc_buf = buf;
+    if (ioctl(sock, SIOCGIFCONF, &ifc) == -1)
+    {
+        cerr << "Failed to get network interface configuration." << endl;
+        close(sock);
+        return "";
+    }
+
+    struct ifreq *it = ifc.ifc_req;
+    const struct ifreq *const end = it + (ifc.ifc_len / sizeof(struct ifreq));
+
+    string mac_address = "";
+    for (; it != end; ++it)
+    {
+        strncpy(ifr.ifr_name, it->ifr_name, IFNAMSIZ - 1);
+
+        if (ioctl(sock, SIOCGIFFLAGS, &ifr) == 0)
+        {
+            if (!(ifr.ifr_flags & IFF_LOOPBACK))
+            {
+                if (ioctl(sock, SIOCGIFHWADDR, &ifr) == 0)
+                {
+                    unsigned char *mac = reinterpret_cast<unsigned char *>(ifr.ifr_hwaddr.sa_data);
+                    char mac_buffer[18];
+                    snprintf(mac_buffer, sizeof(mac_buffer), "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+                    mac_address = mac_buffer;
+                    cout << "MAC Address: " << mac_address << endl;
+                    break;
+                }
+            }
+        }
+        else
+        {
+            cerr << "Failed to get network interface flags." << endl;
+            close(sock);
+            return "";
+        }
+    }
+
+    close(sock);
+
+    if (mac_address.empty())
+    {
+        cerr << "Failed to get host MAC address." << endl;
+        return "";
+    }
+
+    return mac_address;
 }
 
-// TO DO: pega o endereço IP do host
 string get_ip_address()
 {
+    char hostname[256];
+    if (gethostname(hostname, sizeof(hostname)) != 0)
+    {
+        cerr << "Failed to get hostname." << endl;
+        return "";
+    }
 
+    struct hostent *host_entry = gethostbyname(hostname);
+    if (host_entry == nullptr)
+    {
+        cerr << "Failed to get host IP address." << endl;
+        return "";
+    }
+
+    struct in_addr *addr = reinterpret_cast<struct in_addr *>(host_entry->h_addr);
+    string ip_address = inet_ntoa(*addr);
+    cout << "IP Address: " << ip_address << endl;
+    return ip_address;
 
 }
 
