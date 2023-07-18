@@ -19,14 +19,24 @@ using namespace std;
 #include <mutex>
 
 #define PORT_DISCOVERY_SERVICE   8000
-#define PORT_MONITORING_SERVICE  8001
+#define PORT_MONITORING_SERVICE  4000
 
 #define SLEEP_SERVICE_DISCOVERY  1
 #define SLEEP_STATUS_REQUEST     2
 
 #define STATUS_REQUEST           "sleep status needed"
 #define STATUS_AWAKE             "sleep status awake"
-#define GUEST_DISCOVERED         "discovered"
+#define STATUS_QUIT              "sleep status quit"
+
+// Variáveis para o manager
+pthread_mutex_t mutex_table = PTHREAD_MUTEX_INITIALIZER;
+guestTable guests;
+pthread_mutex_t mutex_num_guests = PTHREAD_MUTEX_INITIALIZER;
+int guests_id = 0;
+
+// Variáveis para o participante
+int current_guest_id;
+int current_guest_is_out = 0;
 
 struct packet {
     uint16_t type;
@@ -47,7 +57,6 @@ class guestTable{
 
         map<string, guest> guestList;
 
-
         void addGuest(guest g)
         {
             guestList.insert_or_assign(g.ip_address, g);
@@ -58,7 +67,7 @@ class guestTable{
             guestList.erase(ip_address);
         }
 
-        void putGuestToSleep(string ip_address)
+        void guestSlept(string ip_address)
         {
             guestList.at(ip_address).status = "asleep";
         }
@@ -68,9 +77,15 @@ class guestTable{
             guestList.at(ip_address).status = "awake";
         }
 
-        //string getGuestMacAdress(string ip_address);
-
-        //string getParticipantStatus(string ip_address);
+        list<string> returnGuestsIpAdress()
+        {
+            list<string> list_ip_addresses = {};
+            for(map<string, guest>::iterator it = guestList.begin(); it != guestList.end(); ++it)
+            {
+                 list_ip_addresses.insert(it->first);
+            }
+            return list_ip_addresses;
+        }
 
         void printTable() {
             //system("clear");
@@ -87,7 +102,6 @@ class guestTable{
         }
 };
 
-pthread_mutex_t mutex_table = PTHREAD_MUTEX_INITIALIZER;
-guestTable guests;
+
 
 
