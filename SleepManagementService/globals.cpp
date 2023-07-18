@@ -24,6 +24,7 @@ using namespace std;
 #define SLEEP_SERVICE_DISCOVERY  1
 #define SLEEP_STATUS_REQUEST     2
 
+#define GUEST_DISCOVERED         "I FOUND YOU"
 #define STATUS_REQUEST           "sleep status needed"
 #define STATUS_AWAKE             "sleep status awake"
 #define STATUS_QUIT              "sleep status quit"
@@ -31,11 +32,8 @@ using namespace std;
 // Variáveis para o manager
 pthread_mutex_t mutex_table = PTHREAD_MUTEX_INITIALIZER;
 guestTable guests;
-pthread_mutex_t mutex_num_guests = PTHREAD_MUTEX_INITIALIZER;
-int guests_id = 0;
 
 // Variáveis para o participante
-int current_guest_id;
 int current_guest_is_out = 0;
 
 struct packet {
