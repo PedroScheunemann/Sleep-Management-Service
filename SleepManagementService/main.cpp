@@ -8,17 +8,15 @@ void* guest_interface_service(void *arg);
 string get_host_name();
 string get_mac_address();
 string get_ip_address();
-string pack_discovery_sending_message();
+char* pack_discovery_sending_message();
 
 // Funções do manager
 static void manager_program();
 void* manager_discovery_service(void *arg);
 void* manager_monitoring_service(void *arg);
 void* manager_interface_service(void *arg);
-guest parse_payload(string payload);
-
-// cout << "oi" << endl;
-// cout << "hello" << endl;
+guest parse_payload(char* payload);
+void send_wake_on_lan_packet(string mac_address);
 
 int main(int argc, char **argv)
 {
@@ -152,6 +150,7 @@ void* guest_discovery_service(void *arg)
     if (setsockopt(guest_socket_descriptor, SOL_SOCKET, SO_BROADCAST, &(int){1}, sizeof(int)) < 0)
     {
         cout << "PARTICIPANTE: Erro ao setar o modo broadcast do socket [DESCOBERTA]." << endl;
+        close(guest_socket_descriptor);
         exit(1);
     }
 
@@ -161,8 +160,8 @@ void* guest_discovery_service(void *arg)
     socklen_t address_len = sizeof(struct sockaddr_in);
 
     sending_address.sin_family = AF_INET;
-	sending_address.sin_port = htons(PORT_DISCOVERY_SERVICE);
-	sending_address.sin_addr.s_addr = htonl(INADDR_BROADCAST); // envia para todos os IPs da rede nas portas PORT_DISCOVERY_SERVICE
+	sending_address.sin_port = htons(PORT_DISCOVERY_SERVICE);  // envia para a porta PORT_DISCOVERY_SERVICE
+	sending_address.sin_addr.s_addr = htonl(INADDR_BROADCAST); // pro endereço de broadcast
     ////////////////////////////////////////////////////////////////////////////////////////////
 
     ////////////////////////////////// CONFIGURANDO MENSAGEM ///////////////////////////////////
@@ -175,15 +174,17 @@ void* guest_discovery_service(void *arg)
     ////////////////////////////////////////////////////////////////////////////////////////////
 
     // Enviando mensagem para todo mundo
-    if (sendto(guest_socket_descriptor, sending_message, message_len, 0,(struct sockaddr *) &sending_address, &address_len) < 0)
+    if (sendto(guest_socket_descriptor, sending_message, message_len, 0,(struct sockaddr *) &sending_address, address_len) < 0)
     {
         cout << "PARTICIPANTE: Erro ao enviar mensagem de descoberta." << endl;
+        close(guest_socket_descriptor);
         exit(1);
     }
     // Esperando resposta do manager chegar
     if (recvfrom(guest_socket_descriptor, manager_message, message_len, 0,(struct sockaddr *) &manager_address, &address_len) < 0)
     {
         cout << "PARTICIPANTE: Erro ao receber mensagem do manager de resposta de descoberta." << endl;
+        close(guest_socket_descriptor);
         exit(1);
     }
 
@@ -210,6 +211,7 @@ void* guest_monitoring_service(void *arg)
     if (setsockopt(guest_socket_descriptor, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int)) < 0)
     {
         cout << "PARTICIPANTE: Erro ao setar o modo REUSEADDR do socket [MONITORAMENTO]." << endl;
+        close(guest_socket_descriptor);
         exit(1);
     }
 
@@ -224,9 +226,10 @@ void* guest_monitoring_service(void *arg)
     ////////////////////////////////////////////////////////////////////////////////////////////
 
     // Endereçando o socket
-    if (bind(guest_socket_descriptor, (struct sockaddr*) &guest_address, &address_len) < 0)
+    if (bind(guest_socket_descriptor, (struct sockaddr*) &guest_address, address_len) < 0)
     {
         cout << "PARTICIPANTE: Erro ao endereçar o socket do servidor de monitoramento." << endl;
+        close(guest_socket_descriptor);
         exit(1);
     }
 
@@ -244,6 +247,8 @@ void* guest_monitoring_service(void *arg)
         if (recvfrom(guest_socket_descriptor, manager_message, message_len, 0,(struct sockaddr *) &manager_address, &address_len) < 0)
         {
             cout << "PARTICIPANTE: Erro ao receber mensagem do manager [MONITORAMENTO]." << endl;
+            close(guest_socket_descriptor);
+            exit(1);
         }
         else
         {
@@ -260,9 +265,11 @@ void* guest_monitoring_service(void *arg)
                 {
                     strcpy(guest_message->payload, STATUS_AWAKE);
                 }
-                if (sendto(guest_socket_descriptor, guest_message, message_len, 0,(struct sockaddr *) &manager_address, &address_len) < 0)
+                if (sendto(guest_socket_descriptor, guest_message, message_len, 0,(struct sockaddr *) &manager_address, address_len) < 0)
                 {
                     cout << "PARTICIPANTE: Erro ao enviar mensagem ao manager [MONITORAMENTO]." << endl;
+                    close(guest_socket_descriptor);
+                    exit(1);
                 }
             }
         }
@@ -274,20 +281,19 @@ void* guest_monitoring_service(void *arg)
     return nullptr;
 }
 
-// TO DO: Fica processando a entrada do usuário pra ver se vai vir um pedido de EXIT
+// Fica processando a entrada do usuário pra ver se vai vir um pedido de EXIT.
+// Se chegar, notifica que participante quer sair.
 void* guest_interface_service(void *arg)
 {
     string input;
     cout << "To quit the service type EXIT." << endl;
     cin >> input;
-    if (strcmp(input, "EXIT") == 0)
+    if (input == "EXIT")
     {
-        cout << current_guest_is_out << endl;
-        // Garantindo acesso exclusivo a tabela
+        // Garantindo acesso exclusivo a variável current_guest_is_out
         pthread_mutex_lock(&mutex_guest_out);
         current_guest_is_out = 1;
         pthread_mutex_unlock(&mutex_guest_out);
-        cout << current_guest_is_out << endl;
         exit(0);
     }
 }
@@ -308,6 +314,7 @@ void* manager_discovery_service(void *arg)
     if (setsockopt(manager_socket_descriptor, SOL_SOCKET, SO_BROADCAST, &(int){1}, sizeof(int)) < 0)
     {
         cout << "MANAGER: Erro ao setar o modo broadcast do socket [DESCOBERTA]." << endl;
+        close(manager_socket_descriptor);
         exit(1);
     }
 
@@ -322,9 +329,10 @@ void* manager_discovery_service(void *arg)
     ////////////////////////////////////////////////////////////////////////////////////////////
 
     // Endereçando o socket
-    if (bind(manager_socket_descriptor, (struct sockaddr*) &manager_address, &address_len) < 0)
+    if (bind(manager_socket_descriptor, (struct sockaddr*) &manager_address, address_len) < 0)
     {
         cout << "MANAGER: Erro ao endereçar o socket [DESCOBERTA]." << endl;
+        close(manager_socket_descriptor);
         exit(1);
     }
 
@@ -343,15 +351,19 @@ void* manager_discovery_service(void *arg)
         if (recvfrom(manager_socket_descriptor, guest_message, message_len, 0,(struct sockaddr *) &guest_address, &address_len) < 0)
         {
             cout << "MANAGER: Erro ao receber mensagem de participante [DESCOBERTA]." << endl;
+            close(manager_socket_descriptor);
+            exit(1);
         }
         else
         {
             // Se encontrou um participante, envia resposta
             if (guest_message->type == SLEEP_SERVICE_DISCOVERY)
             {
-                if (sendto(manager_socket_descriptor, manager_message, message_len, 0,(struct sockaddr *) &guest_address, &address_len) < 0)
+                if (sendto(manager_socket_descriptor, manager_message, message_len, 0,(struct sockaddr *) &guest_address, address_len) < 0)
                 {
                     cout << "MANAGER: Erro ao enviar mensagem a participante [DESCOBERTA]." << endl;
+                    close(manager_socket_descriptor);
+                    exit(1);
                 }
                 // Adiciona na tabela de paticipantes
                 guest new_guest = parse_payload(guest_message->payload);
@@ -360,6 +372,7 @@ void* manager_discovery_service(void *arg)
                 // Garantindo acesso exclusivo a tabela
                 pthread_mutex_lock(&mutex_table);
                 guests.addGuest(new_guest);
+                guests.printTable();
                 pthread_mutex_unlock(&mutex_table);
             }
         }
@@ -387,6 +400,7 @@ void* manager_monitoring_service(void *arg)
     if (setsockopt(manager_socket_descriptor, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int)) < 0)
     {
         cout << "MANAGER: Erro ao setar o modo REUSEADDR do socket [MONITORAMENTO]." << endl;
+        close(manager_socket_descriptor);
         exit(1);
     }
 
@@ -397,6 +411,7 @@ void* manager_monitoring_service(void *arg)
     if (setsockopt(manager_socket_descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0)
     {
         cout << "MANAGER: Erro ao setar o timeout do socket [MONITORAMENTO]." << endl;
+        close(manager_socket_descriptor);
         exit(1);
     }
 
@@ -420,7 +435,7 @@ void* manager_monitoring_service(void *arg)
     {
         // Pega a list de IPs dos participantes
         pthread_mutex_lock(&mutex_table);
-        list<string> guests_list_ip_adresses = guests.returnGuestsIpAdress();
+        list<string> guests_list_ip_adresses = guests.returnGuestsIpAddressList();
         pthread_mutex_unlock(&mutex_table);
 
         // Envia mensagens para todos os participantes
@@ -429,8 +444,10 @@ void* manager_monitoring_service(void *arg)
             guest_address.sin_port = htons(PORT_MONITORING_SERVICE);
             inet_aton(it->c_str(), (in_addr *) &guest_address.sin_addr.s_addr);  // envia em (porta PORT_MONITORING_SERVICE, ip do participante)
 
-            if (sendto(manager_socket_descriptor, manager_message, message_len, 0,(struct sockaddr *) &guest_address, &address_len) < 0) {
+            if (sendto(manager_socket_descriptor, manager_message, message_len, 0,(struct sockaddr *) &guest_address, address_len) < 0) {
                 cout << "MANAGER: Erro ao enviar mensagem para algum participante." << endl;
+                close(manager_socket_descriptor);
+                exit(1);
             }
 
             // Esperando resposta chegar
@@ -439,6 +456,7 @@ void* manager_monitoring_service(void *arg)
                 // Se resposta não chegou, depois do timeout, atualiza status do participante para "asleep"
                 pthread_mutex_lock(&mutex_table);
                 guests.guestSlept(*it);
+                guests.printTable();
                 pthread_mutex_unlock(&mutex_table);
             }
             else
@@ -451,6 +469,7 @@ void* manager_monitoring_service(void *arg)
                     {
                         pthread_mutex_lock(&mutex_table);
                         guests.wakeGuest(*it);
+                        guests.printTable();
                         pthread_mutex_unlock(&mutex_table);
                     }
                     // Se foi avisando que está saindo, remove participante da tabela
@@ -458,6 +477,7 @@ void* manager_monitoring_service(void *arg)
                     {
                         pthread_mutex_lock(&mutex_table);
                         guests.deleteGuest(*it);
+                        guests.printTable();
                         pthread_mutex_unlock(&mutex_table);
                     }
                 }
@@ -471,15 +491,27 @@ void* manager_monitoring_service(void *arg)
     return nullptr;
 }
 
-// TO DO: Fica processando a entrada do usuário pra ver se vai vir um pedido de WAKEUP hostname -> wake on lan
+// Fica processando a entrada do usuário pra ver se vai vir um pedido de WAKEUP <hostname>.
+// Se chegar, manda um pacote mágico wake on lan para o hostname.
 void* manager_interface_service(void *arg)
 {
-    string input;
-    cout << "To wake a participant type WAKE <mac_address>." << endl;
-    cin >> input;
-    if (strcmp(input.substr(0, input.find(" ")), "WAKE") == 0)
+    string WAKEUP, hostname;
+    while(1)
     {
-        // wake on lan no participante
+        cout << "To wake a guest type WAKEUP <hostname>. " << endl;
+        cin >> WAKEUP >> hostname;
+        if (WAKEUP == "WAKEUP")
+        {
+            string mac_address = guests.returnGuestMacAddress(hostname);
+            if (mac_address.empty())
+            {
+                cout << "Hostname not found. " << endl;
+            }
+            else
+            {
+                send_wake_on_lan_packet(mac_address);
+            }
+        }
     }
     return nullptr;
 }
@@ -489,13 +521,12 @@ string get_host_name()
     char hostname[256];
     if (gethostname(hostname, sizeof(hostname)) == 0)
     {
-        cout << "Hostname: " << hostname << endl;
         return string(hostname);
     }
     else
     {
-        cerr << "Failed to get hostname." << endl;
-        return ""; // Returning an empty string to indicate failure
+        cout << "Falha no get_host_name." << endl;
+        return "";
     }
 }
 
@@ -508,7 +539,7 @@ string get_mac_address()
     int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
     if (sock == -1)
     {
-        cerr << "Failed to create socket." << endl;
+        cout << "Falha no get_mac_address." << endl;
         return "";
     }
 
@@ -516,7 +547,7 @@ string get_mac_address()
     ifc.ifc_buf = buf;
     if (ioctl(sock, SIOCGIFCONF, &ifc) == -1)
     {
-        cerr << "Failed to get network interface configuration." << endl;
+        cout << "Falha no get_mac_address." << endl;
         close(sock);
         return "";
     }
@@ -539,14 +570,13 @@ string get_mac_address()
                     char mac_buffer[18];
                     snprintf(mac_buffer, sizeof(mac_buffer), "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
                     mac_address = mac_buffer;
-                    cout << "MAC Address: " << mac_address << endl;
                     break;
                 }
             }
         }
         else
         {
-            cerr << "Failed to get network interface flags." << endl;
+            cout << "Falha no get_mac_address." << endl;
             close(sock);
             return "";
         }
@@ -556,7 +586,7 @@ string get_mac_address()
 
     if (mac_address.empty())
     {
-        cerr << "Failed to get host MAC address." << endl;
+        cout << "Falha no get_mac_address." << endl;
         return "";
     }
 
@@ -568,25 +598,23 @@ string get_ip_address()
     char hostname[256];
     if (gethostname(hostname, sizeof(hostname)) != 0)
     {
-        cerr << "Failed to get hostname." << endl;
+        cout << "Falha no get_ip_address." << endl;
         return "";
     }
 
     struct hostent *host_entry = gethostbyname(hostname);
     if (host_entry == nullptr)
     {
-        cerr << "Failed to get host IP address." << endl;
+        cout << "Falha no get_ip_address." << endl;
         return "";
     }
 
     struct in_addr *addr = reinterpret_cast<struct in_addr *>(host_entry->h_addr);
     string ip_address = inet_ntoa(*addr);
-    cout << "IP Address: " << ip_address << endl;
     return ip_address;
-
 }
 
-string pack_discovery_sending_message()
+char* pack_discovery_sending_message()
 {
     // Coleta nome do host, endereço mac e endereço IP
     string hostname = get_host_name();
@@ -594,10 +622,10 @@ string pack_discovery_sending_message()
     string ip_address = get_ip_address();
 
     string message = hostname + ";" + mac_address + ";" + ip_address + ";";
-    return message;
+    return &message[0];
 }
 
-guest parse_payload(string payload)
+guest parse_payload(char* payload)
 {
     guest guest_payload;
     string delimiter = ";";
@@ -617,5 +645,66 @@ guest parse_payload(string payload)
 
     return guest_payload;
 }
+
+void send_wake_on_lan_packet(string mac_address)
+{
+    // Criando o descritor do socket do manager
+    int manager_socket_descriptor = socket(AF_INET, SOCK_DGRAM, 0);
+    if (manager_socket_descriptor < 0)
+    {
+        cout << "MANAGER: Erro na criação do socket [WAKEONLAN]." << endl;
+        return;
+    }
+
+    // Setando o socket para a opção de broadcast (habilitar o envio de broadcast messages)
+    if (setsockopt(manager_socket_descriptor, SOL_SOCKET, SO_BROADCAST, &(int){1}, sizeof(int)) < 0)
+    {
+        cout << "MANAGER: Erro ao setar o modo broadcast do socket [WAKEONLAN]." << endl;
+        close(manager_socket_descriptor);
+        return;
+    }
+
+    ////////////////////////////////// CONFIGURANDO ENDEREÇOS //////////////////////////////////
+    struct sockaddr_in sending_address;     // endereço para onde mandaremos mensagem
+    socklen_t address_len = sizeof(struct sockaddr_in);
+
+    sending_address.sin_family = AF_INET;
+	sending_address.sin_port = htons(9);    // envia para a porta 9
+	sending_address.sin_addr.s_addr = htonl(INADDR_BROADCAST); // no endereço de broadcast
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+
+    ////////////////////////////////// CONFIGURANDO MENSAGEM ///////////////////////////////////
+    // Converte o endereço MAC para bytes
+    stringstream ss(mac_address);
+    vector<unsigned char> mac_address_in_bytes;
+    unsigned int byte;
+    while (ss >> hex >> byte)
+        mac_address_in_bytes.push_back(static_cast<unsigned char>(byte));
+
+    // Cria o pacote mágico wake on lan (6 bytes 0xFF, seguido por 16 repetições do endereço MAC de 48 bits)
+    const int magic_packet_size = 102;
+    unsigned char magic_packet[magic_packet_size];
+    memset(magic_packet, 0xFF, 6);
+    for (int i = 6; i < magic_packet_size; i += 6)
+        memcpy(&magic_packet[i], &mac_address_in_bytes[0], 6);
+    ////////////////////////////////////////////////////////////////////////////////////////////
+
+    // Enviando pacote mágico por broadcast
+    if (sendto(manager_socket_descriptor, magic_packet, magic_packet_size, 0,(struct sockaddr *) &sending_address, address_len) < 0)
+    {
+        cout << "MANAGER: Erro ao enviar pacote mágico wol." << endl;
+        close(manager_socket_descriptor);
+        exit(1);
+    }
+
+    free(sending_message);
+    free(magic_packet);
+
+    close(manager_socket_descriptor);
+    return nullptr;
+}
+
+
 
 

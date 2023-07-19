@@ -8,20 +8,23 @@ using namespace std;
 #include <map>
 #include <iomanip>
 #include <mutex>
-//#include <sys/types.h>
-//#include <sys/socket.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/ioctl.h>
+#include <netinet/in.h>
+#include <net/if.h>
+#include <csignal>
+#include <netdb.h>
+#include <arpa/inet.h>
 
-//#include <csignal>
 //#include <ifaddrs.h>
 //#include <cstdio>
-//#include <netinet/in.h>
-//#include <arpa/inet.h>
 //#include <unistd.h>
 //#include <cstdlib>
 
-
 #define PORT_DISCOVERY_SERVICE   8000
 #define PORT_MONITORING_SERVICE  4000
+#define PORT_WAKE_ON_LAN  9
 
 #define SLEEP_SERVICE_DISCOVERY  1
 #define SLEEP_STATUS_REQUEST     2
@@ -33,7 +36,7 @@ using namespace std;
 
 struct packet {
     uint16_t type;
-    char* payload[256];
+    char payload[256];
 };
 
 struct guest{
@@ -70,18 +73,29 @@ class guestTable{
             guestList.at(ip_address).status = "awake";
         }
 
-        list<string> returnGuestsIpAdress()
+        list<string> returnGuestsIpAddressList()
         {
             list<string> list_ip_addresses = {};
-            map<string, guest>::iterator it = guestList.begin();
+            auto it = guestList.begin();
             for (auto &i: guestList) {
                 list_ip_addresses.insert(it, i.first);
             }
             return list_ip_addresses;
         }
 
+        string returnGuestMacAddress(string hostname)
+        {
+            for (auto &i: guestList) {
+                if (i.second.hostname == hostname)
+                {
+                    return i.second.mac_address;
+                }
+            }
+            return "";
+        }
+
         void printTable() {
-            //system("clear");
+            system("clear");
             cout << left;
             cout << "--------------------------------------------------------------------------\n";
             cout << "|Hostname \t|MAC Address      |IP Address     |Status|\n";
@@ -103,5 +117,3 @@ guestTable guests;
 // Variáveis para o participante
 pthread_mutex_t mutex_guest_out = PTHREAD_MUTEX_INITIALIZER;
 int current_guest_is_out = 0;
-
-
