@@ -37,37 +37,19 @@ int main(int argc, char **argv)
 static void guest_program()
 {
     pthread_t thread_discovery, thread_monitoring, thread_interface;
-    pthread_attr_t attributes_thread_discovery, attributes_thread_monitoring, attributes_thread_interface;
-
-    // inicializando os atributos das threads
-    if (pthread_attr_init(&attributes_thread_discovery) != 0)
-    {
-        cout << "PARTICIPANTE: Erro na criação dos atributos da thread de descoberta." << endl;
-        exit(1);
-    }
-    if (pthread_attr_init(&attributes_thread_monitoring) != 0)
-    {
-        cout << "PARTICIPANTE: Erro na criação dos atributos da threads de monitoramento." << endl;
-        exit(1);
-    }
-    if (pthread_attr_init(&attributes_thread_interface)!= 0)
-    {
-        cout << "PARTICIPANTE: Erro na criação dos atributos da thread da interface." << endl;
-        exit(1);
-    }
 
     // criando as threads
-    if (pthread_create(&thread_discovery, &attributes_thread_discovery, guest_discovery_service, nullptr) != 0)
+    if (pthread_create(&thread_discovery, nullptr, guest_discovery_service, nullptr) != 0)
     {
         cout << "PARTICIPANTE: Erro na criação da thread de descoberta." << endl;
         exit(1);
     }
-    if (pthread_create(&thread_monitoring, &attributes_thread_monitoring, guest_monitoring_service, nullptr) != 0)
+    if (pthread_create(&thread_monitoring, nullptr, guest_monitoring_service, nullptr) != 0)
     {
-        cout << "PARTICIPANTE: Erro na criação da threads de monitoramento." << endl;
+        cout << "PARTICIPANTE: Erro na criação da thread de monitoramento." << endl;
         exit(1);
     }
-    if (pthread_create(&thread_interface, &attributes_thread_interface, guest_interface_service, nullptr) != 0)
+    if (pthread_create(&thread_interface, nullptr, guest_interface_service, nullptr) != 0)
     {
         cout << "PARTICIPANTE: Erro na criação da thread da interface." << endl;
         exit(1);
@@ -77,47 +59,24 @@ static void guest_program()
     pthread_join(thread_discovery, nullptr);
     pthread_join(thread_monitoring, nullptr);
     pthread_join(thread_interface, nullptr);
-
-    // destruindo atributos
-    pthread_attr_destroy(&attributes_thread_discovery);
-    pthread_attr_destroy(&attributes_thread_monitoring);
-    pthread_attr_destroy(&attributes_thread_interface);
 }
 
 static void manager_program()
 {
     pthread_t thread_discovery, thread_monitoring, thread_interface;
-    pthread_attr_t attributes_thread_discovery, attributes_thread_monitoring, attributes_thread_interface;
-
-    // inicializando os atributos das threads
-    if (pthread_attr_init(&attributes_thread_discovery) != 0)
-    {
-        cout << "MANAGER: Erro na criação dos atributos da thread de descoberta." << endl;
-        exit(1);
-    }
-    if (pthread_attr_init(&attributes_thread_monitoring) != 0)
-    {
-        cout << "MANAGER: Erro na criação dos atributos da thread de monitoramento." << endl;
-        exit(1);
-    }
-    if (pthread_attr_init(&attributes_thread_interface)!= 0)
-    {
-        cout << "MANAGER: Erro na criação dos atributos da thread da interface." << endl;
-        exit(1);
-    }
 
     // criando as threads
-    if (pthread_create(&thread_discovery, &attributes_thread_discovery, manager_discovery_service , nullptr) != 0)
+    if (pthread_create(&thread_discovery, nullptr, manager_discovery_service , nullptr) != 0)
     {
         cout << "MANAGER: Erro na criação da thread de descoberta." << endl;
         exit(1);
     }
-    if (pthread_create(&thread_monitoring, &attributes_thread_monitoring, manager_monitoring_service, nullptr) != 0)
+    if (pthread_create(&thread_monitoring, nullptr, manager_monitoring_service, nullptr) != 0)
     {
         cout << "MANAGER: Erro na criação da thread de monitoramento." << endl;
         exit(1);
     }
-    if (pthread_create(&thread_interface, &attributes_thread_interface, manager_interface_service, nullptr) != 0)
+    if (pthread_create(&thread_interface, nullptr, manager_interface_service, nullptr) != 0)
     {
         cout << "MANAGER: Erro na criação da thread da interface." << endl;
         exit(1);
@@ -127,11 +86,6 @@ static void manager_program()
     pthread_join(thread_discovery, nullptr);
     pthread_join(thread_monitoring, nullptr);
     pthread_join(thread_interface, nullptr);
-
-    // destruindo atributos
-    pthread_attr_destroy(&attributes_thread_discovery);
-    pthread_attr_destroy(&attributes_thread_monitoring);
-    pthread_attr_destroy(&attributes_thread_interface);
 }
 
 // Envia pacotes do tipo SLEEP SERVICE DISCOVERY para as estações por broadcast e espera ser respondido pelo manager.
@@ -177,6 +131,8 @@ void* guest_discovery_service(void *arg)
     if (sendto(guest_socket_descriptor, sending_message, message_len, 0,(struct sockaddr *) &sending_address, address_len) < 0)
     {
         cout << "PARTICIPANTE: Erro ao enviar mensagem de descoberta." << endl;
+        free(sending_message);
+        free(manager_message);
         close(guest_socket_descriptor);
         exit(1);
     }
@@ -184,14 +140,16 @@ void* guest_discovery_service(void *arg)
     if (recvfrom(guest_socket_descriptor, manager_message, message_len, 0,(struct sockaddr *) &manager_address, &address_len) < 0)
     {
         cout << "PARTICIPANTE: Erro ao receber mensagem do manager de resposta de descoberta." << endl;
+        free(sending_message);
+        free(manager_message);
         close(guest_socket_descriptor);
         exit(1);
     }
 
     free(sending_message);
     free(manager_message);
-
     close(guest_socket_descriptor);
+
     return nullptr;
 }
 
@@ -247,6 +205,8 @@ void* guest_monitoring_service(void *arg)
         if (recvfrom(guest_socket_descriptor, manager_message, message_len, 0,(struct sockaddr *) &manager_address, &address_len) < 0)
         {
             cout << "PARTICIPANTE: Erro ao receber mensagem do manager [MONITORAMENTO]." << endl;
+            free(manager_message);
+            free(guest_message);
             close(guest_socket_descriptor);
             exit(1);
         }
@@ -268,6 +228,8 @@ void* guest_monitoring_service(void *arg)
                 if (sendto(guest_socket_descriptor, guest_message, message_len, 0,(struct sockaddr *) &manager_address, address_len) < 0)
                 {
                     cout << "PARTICIPANTE: Erro ao enviar mensagem ao manager [MONITORAMENTO]." << endl;
+                    free(manager_message);
+                    free(guest_message);
                     close(guest_socket_descriptor);
                     exit(1);
                 }
@@ -276,8 +238,8 @@ void* guest_monitoring_service(void *arg)
     }
     free(manager_message);
     free(guest_message);
-
     close(guest_socket_descriptor);
+
     return nullptr;
 }
 
@@ -294,8 +256,8 @@ void* guest_interface_service(void *arg)
         pthread_mutex_lock(&mutex_guest_out);
         current_guest_is_out = 1;
         pthread_mutex_unlock(&mutex_guest_out);
-        exit(0);
     }
+    return nullptr;
 }
 
 // Recebendo e respondendo pacotes do tipo SLEEP SERVICE DISCOVERY que chegaram através de broadcast.
@@ -351,6 +313,8 @@ void* manager_discovery_service(void *arg)
         if (recvfrom(manager_socket_descriptor, guest_message, message_len, 0,(struct sockaddr *) &guest_address, &address_len) < 0)
         {
             cout << "MANAGER: Erro ao receber mensagem de participante [DESCOBERTA]." << endl;
+            free(guest_message);
+            free(manager_message);
             close(manager_socket_descriptor);
             exit(1);
         }
@@ -362,6 +326,8 @@ void* manager_discovery_service(void *arg)
                 if (sendto(manager_socket_descriptor, manager_message, message_len, 0,(struct sockaddr *) &guest_address, address_len) < 0)
                 {
                     cout << "MANAGER: Erro ao enviar mensagem a participante [DESCOBERTA]." << endl;
+                    free(guest_message);
+                    free(manager_message);
                     close(manager_socket_descriptor);
                     exit(1);
                 }
@@ -379,8 +345,8 @@ void* manager_discovery_service(void *arg)
     }
     free(guest_message);
     free(manager_message);
-
     close(manager_socket_descriptor);
+
     return nullptr;
 }
 
@@ -446,6 +412,8 @@ void* manager_monitoring_service(void *arg)
 
             if (sendto(manager_socket_descriptor, manager_message, message_len, 0,(struct sockaddr *) &guest_address, address_len) < 0) {
                 cout << "MANAGER: Erro ao enviar mensagem para algum participante." << endl;
+                free(manager_message);
+                free(guest_message);
                 close(manager_socket_descriptor);
                 exit(1);
             }
@@ -486,8 +454,8 @@ void* manager_monitoring_service(void *arg)
     }
     free(manager_message);
     free(guest_message);
-
     close(manager_socket_descriptor);
+
     return nullptr;
 }
 
