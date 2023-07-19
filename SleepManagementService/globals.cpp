@@ -78,7 +78,7 @@ class guestTable{
             list<string> list_ip_addresses = {};
             auto it = guestList.begin();
             for (auto &i: guestList) {
-                list_ip_addresses.insert(it, i.first);
+                list_ip_addresses.insert(it, i.second.ip_address);
             }
             return list_ip_addresses;
         }
