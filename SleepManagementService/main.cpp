@@ -1,6 +1,14 @@
 #include "globals.cpp"
 
-// FunÁıes do participante
+// Vari√°veis do manager
+pthread_mutex_t mutex_table = PTHREAD_MUTEX_INITIALIZER;
+guestTable guests;
+
+// Vari√°veis do participante
+pthread_mutex_t mutex_guest_out = PTHREAD_MUTEX_INITIALIZER;
+int current_guest_is_out = 0;
+
+// Fun√ß√µes do participante
 static void guest_program();
 void* guest_discovery_service(void *arg);
 void* guest_monitoring_service(void *arg);
@@ -8,9 +16,9 @@ void* guest_interface_service(void *arg);
 string get_host_name();
 string get_mac_address();
 string get_ip_address();
-char* pack_discovery_sending_message();
+string pack_discovery_sending_message();
 
-// FunÁıes do manager
+// Fun√ß√µes do manager
 static void manager_program();
 void* manager_discovery_service(void *arg);
 void* manager_monitoring_service(void *arg);
@@ -20,9 +28,7 @@ void send_wake_on_lan_packet(string mac_address);
 
 int main(int argc, char **argv)
 {
-    cout << "./sleep_server OR ./sleep_server manager" << endl;
-
-    // ./sleep_server
+    //./sleep_server
     if (argc == 1)
     {
         guest_program();
@@ -41,17 +47,17 @@ static void guest_program()
     // criando as threads
     if (pthread_create(&thread_discovery, nullptr, guest_discovery_service, nullptr) != 0)
     {
-        cout << "PARTICIPANTE: Erro na criaÁ„o da thread de descoberta." << endl;
+        cout << "PARTICIPANTE: Erro na cria√ß√£o da thread de descoberta." << endl;
         exit(1);
     }
     if (pthread_create(&thread_monitoring, nullptr, guest_monitoring_service, nullptr) != 0)
     {
-        cout << "PARTICIPANTE: Erro na criaÁ„o da thread de monitoramento." << endl;
+        cout << "PARTICIPANTE: Erro na cria√ß√£o da thread de monitoramento." << endl;
         exit(1);
     }
     if (pthread_create(&thread_interface, nullptr, guest_interface_service, nullptr) != 0)
     {
-        cout << "PARTICIPANTE: Erro na criaÁ„o da thread da interface." << endl;
+        cout << "PARTICIPANTE: Erro na cria√ß√£o da thread da interface." << endl;
         exit(1);
     }
 
@@ -68,17 +74,17 @@ static void manager_program()
     // criando as threads
     if (pthread_create(&thread_discovery, nullptr, manager_discovery_service , nullptr) != 0)
     {
-        cout << "MANAGER: Erro na criaÁ„o da thread de descoberta." << endl;
+        cout << "MANAGER: Erro na cria√ß√£o da thread de descoberta." << endl;
         exit(1);
     }
     if (pthread_create(&thread_monitoring, nullptr, manager_monitoring_service, nullptr) != 0)
     {
-        cout << "MANAGER: Erro na criaÁ„o da thread de monitoramento." << endl;
+        cout << "MANAGER: Erro na cria√ß√£o da thread de monitoramento." << endl;
         exit(1);
     }
     if (pthread_create(&thread_interface, nullptr, manager_interface_service, nullptr) != 0)
     {
-        cout << "MANAGER: Erro na criaÁ„o da thread da interface." << endl;
+        cout << "MANAGER: Erro na cria√ß√£o da thread da interface." << endl;
         exit(1);
     }
 
@@ -88,7 +94,7 @@ static void manager_program()
     pthread_join(thread_interface, nullptr);
 }
 
-// Envia pacotes do tipo SLEEP SERVICE DISCOVERY para as estaÁıes por broadcast e espera ser respondido pelo manager.
+// Envia pacotes do tipo SLEEP_SERVICE_DISCOVERY para as esta√ß√µes por broadcast e espera ser respondido pelo manager.
 // CLIENTE
 void* guest_discovery_service(void *arg)
 {
@@ -96,64 +102,70 @@ void* guest_discovery_service(void *arg)
     int guest_socket_descriptor = socket(AF_INET, SOCK_DGRAM, 0);
     if (guest_socket_descriptor < 0)
     {
-        cout << "PARTICIPANTE: Erro na criaÁ„o do socket [DESCOBERTA]." << endl;
+        cout << "PARTICIPANTE: Erro na cria√ß√£o do socket [DESCOBERTA]." << endl;
         exit(1);
     }
 
-    // Setando o socket para a opÁ„o de broadcast (habilitar o envio de broadcast messages)
-    if (setsockopt(guest_socket_descriptor, SOL_SOCKET, SO_BROADCAST, &(int){1}, sizeof(int)) < 0)
+    // Setando a op√ß√£o de broadcast do socket (habilitando o envio de broadcast messages)
+    int enable_broadcast = 1;
+    if (setsockopt(guest_socket_descriptor, SOL_SOCKET, SO_BROADCAST, &enable_broadcast, sizeof(int)) < 0)
     {
         cout << "PARTICIPANTE: Erro ao setar o modo broadcast do socket [DESCOBERTA]." << endl;
         close(guest_socket_descriptor);
         exit(1);
     }
 
-    ////////////////////////////////// CONFIGURANDO ENDERE«OS //////////////////////////////////
-    struct sockaddr_in sending_address;     // endereÁo para onde mandaremos mensagem
-    struct sockaddr_in manager_address;     // endereÁo de onde vai vir a resposta (que ser· do manager)
+    // Setando um timeout
+    struct timeval timeout;
+    timeout.tv_sec = 4;    // 4 segundos esperando resposta do manager
+    timeout.tv_usec = 0;
+    if (setsockopt(guest_socket_descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0)
+    {
+        cout << "PARTICIPANTE: Erro ao setar o timeout do socket [DESCOBERTA]." << endl;
+        close(guest_socket_descriptor);
+        exit(1);
+    }
+
+    ////////////////////////////////// CONFIGURANDO ENDEREÔøΩOS //////////////////////////////////
+    struct sockaddr_in sending_address;     // endere√ßo para onde mandaremos mensagem
+    struct sockaddr_in manager_address;     // endere√ßo de onde vai vir a resposta (que ser√° do manager)
     socklen_t address_len = sizeof(struct sockaddr_in);
 
     sending_address.sin_family = AF_INET;
 	sending_address.sin_port = htons(PORT_DISCOVERY_SERVICE);  // envia para a porta PORT_DISCOVERY_SERVICE
-	sending_address.sin_addr.s_addr = htonl(INADDR_BROADCAST); // pro endereÁo de broadcast
+	sending_address.sin_addr.s_addr = htonl(INADDR_BROADCAST); // pro endere√ßo de broadcast
     ////////////////////////////////////////////////////////////////////////////////////////////
 
     ////////////////////////////////// CONFIGURANDO MENSAGEM ///////////////////////////////////
-    packet* sending_message = new packet();  // mensagem que ser· enviada para todas as estaÁıes (hostname;mac_address;ip_address;)
-    packet* manager_message = new packet();  // mensagem de resposta que ser· recebida do manager
+    packet* sending_message = new packet();  // mensagem que ser√° enviada para todas as esta√ß√µes (hostname;mac_address;ip_address;)
+    packet* manager_message = new packet();  // mensagem de resposta que ser√° recebida do manager
     size_t  message_len = sizeof(packet);
 
     sending_message->type = SLEEP_SERVICE_DISCOVERY;
-    strcpy(sending_message->payload, pack_discovery_sending_message());
+    strcpy(sending_message->payload, pack_discovery_sending_message().c_str());
     ////////////////////////////////////////////////////////////////////////////////////////////
 
-    // Enviando mensagem para todo mundo
-    if (sendto(guest_socket_descriptor, sending_message, message_len, 0,(struct sockaddr *) &sending_address, address_len) < 0)
+    while(1)
     {
-        cout << "PARTICIPANTE: Erro ao enviar mensagem de descoberta." << endl;
-        free(sending_message);
-        free(manager_message);
-        close(guest_socket_descriptor);
-        exit(1);
-    }
-    // Esperando resposta do manager chegar
-    if (recvfrom(guest_socket_descriptor, manager_message, message_len, 0,(struct sockaddr *) &manager_address, &address_len) < 0)
-    {
-        cout << "PARTICIPANTE: Erro ao receber mensagem do manager de resposta de descoberta." << endl;
-        free(sending_message);
-        free(manager_message);
-        close(guest_socket_descriptor);
-        exit(1);
+        // Enviando mensagem para todo mundo
+        if (sendto(guest_socket_descriptor, sending_message, message_len, 0,(struct sockaddr *) &sending_address, address_len) < 0)
+        {
+            cout << "PARTICIPANTE: Erro ao enviar mensagem de descoberta." << endl;
+            close(guest_socket_descriptor);
+            exit(1);
+        }
+        // Esperando resposta do manager chegar at√© timeout
+        if (recvfrom(guest_socket_descriptor, manager_message, message_len, 0,(struct sockaddr *) &manager_address, &address_len) >= 0)
+        {
+            break; // Se chegou, sai do loop, sen√£o, tenta de novo
+        }
     }
 
-    free(sending_message);
-    free(manager_message);
     close(guest_socket_descriptor);
-
     return nullptr;
 }
 
-// Recebendo e respondendo pacotes do tipo SLEEP STATUS REQUEST para o manager.
+// Recebendo e respondendo pacotes do tipo SLEEP_STATUS_REQUEST para o manager.
 // SERVIDOR
 void* guest_monitoring_service(void *arg)
 {
@@ -161,39 +173,40 @@ void* guest_monitoring_service(void *arg)
     int guest_socket_descriptor = socket(AF_INET, SOCK_DGRAM, 0);
     if (guest_socket_descriptor < 0)
     {
-        cout << "PARTICIPANTE: Erro na criaÁ„o do socket [MONITORAMENTO]." << endl;
+        cout << "PARTICIPANTE: Erro na cria√ß√£o do socket [MONITORAMENTO]." << endl;
         exit(1);
     }
 
-    // Setando a a opÁ„o REUSEADDR do socket (v·rios participantes se conectando na mesma porta do manager)
-    if (setsockopt(guest_socket_descriptor, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int)) < 0)
+    // Setando a op√ß√£o REUSEADDR do socket
+    int enable_reuseaddr = 1;
+    if (setsockopt(guest_socket_descriptor, SOL_SOCKET, SO_REUSEADDR, &enable_reuseaddr, sizeof(int)) < 0)
     {
         cout << "PARTICIPANTE: Erro ao setar o modo REUSEADDR do socket [MONITORAMENTO]." << endl;
         close(guest_socket_descriptor);
         exit(1);
     }
 
-    ////////////////////////////////// CONFIGURANDO ENDERE«OS //////////////////////////////////
-    struct sockaddr_in guest_address;        // endereÁo local do guest
-    struct sockaddr_in manager_address;      // endereÁo de onde vem o pacote (que ser· do manager)
+    ////////////////////////////////// CONFIGURANDO ENDEREÔøΩOS //////////////////////////////////
+    struct sockaddr_in guest_address;        // endere√ßo local do guest
+    struct sockaddr_in manager_address;      // endere√ßo de onde vem o pacote (que ser√° do manager)
     socklen_t address_len = sizeof(struct sockaddr_in);
 
     guest_address.sin_family = AF_INET;
 	guest_address.sin_port = htons(PORT_MONITORING_SERVICE);  // recebe na porta PORT_MONITORING_SERVICE
-	guest_address.sin_addr.s_addr = htonl(INADDR_ANY);        // qualquer IP da m·quina
+	guest_address.sin_addr.s_addr = htonl(INADDR_ANY);
     ////////////////////////////////////////////////////////////////////////////////////////////
 
-    // EndereÁando o socket
+    // Endere√ßando o socket
     if (bind(guest_socket_descriptor, (struct sockaddr*) &guest_address, address_len) < 0)
     {
-        cout << "PARTICIPANTE: Erro ao endereÁar o socket do servidor de monitoramento." << endl;
+        cout << "PARTICIPANTE: Erro ao endere√ßar o socket do servidor de monitoramento." << endl;
         close(guest_socket_descriptor);
         exit(1);
     }
 
     ////////////////////////////////// CONFIGURANDO MENSAGEM ///////////////////////////////////
-    packet* manager_message = new packet();    // mensagem que ser· recebida do manager
-    packet* guest_message = new packet();      // mensagem de resposta que ser· enviada pelo guest
+    packet* manager_message = new packet();    // mensagem que ser√° recebida do manager
+    packet* guest_message = new packet();      // mensagem de resposta que ser√° enviada pelo guest
     size_t  message_len = sizeof(packet);
 
     guest_message->type = SLEEP_STATUS_REQUEST;
@@ -205,8 +218,6 @@ void* guest_monitoring_service(void *arg)
         if (recvfrom(guest_socket_descriptor, manager_message, message_len, 0,(struct sockaddr *) &manager_address, &address_len) < 0)
         {
             cout << "PARTICIPANTE: Erro ao receber mensagem do manager [MONITORAMENTO]." << endl;
-            free(manager_message);
-            free(guest_message);
             close(guest_socket_descriptor);
             exit(1);
         }
@@ -215,12 +226,12 @@ void* guest_monitoring_service(void *arg)
             // Se manager mandou mensagem de monitoramento, responde
             if (manager_message->type == SLEEP_STATUS_REQUEST)
             {
-                // Se o participante quer sair do serviÁo, envia mensagem avisando que quer sair
+                // Se o participante quer sair do servi√ßo, envia mensagem avisando que quer sair
                 if (current_guest_is_out)
                 {
                     strcpy(guest_message->payload, STATUS_QUIT);
                 }
-                // Sen„o, envia mensagem avisando que est· acordado
+                // Sen√£o, envia mensagem avisando que est√° acordado
                 else
                 {
                     strcpy(guest_message->payload, STATUS_AWAKE);
@@ -228,22 +239,17 @@ void* guest_monitoring_service(void *arg)
                 if (sendto(guest_socket_descriptor, guest_message, message_len, 0,(struct sockaddr *) &manager_address, address_len) < 0)
                 {
                     cout << "PARTICIPANTE: Erro ao enviar mensagem ao manager [MONITORAMENTO]." << endl;
-                    free(manager_message);
-                    free(guest_message);
                     close(guest_socket_descriptor);
                     exit(1);
                 }
             }
         }
     }
-    free(manager_message);
-    free(guest_message);
     close(guest_socket_descriptor);
-
     return nullptr;
 }
 
-// Fica processando a entrada do usu·rio pra ver se vai vir um pedido de EXIT.
+// Fica processando a entrada do usu√°rio pra ver se vai vir um pedido de EXIT.
 // Se chegar, notifica que participante quer sair.
 void* guest_interface_service(void *arg)
 {
@@ -252,7 +258,7 @@ void* guest_interface_service(void *arg)
     cin >> input;
     if (input == "EXIT")
     {
-        // Garantindo acesso exclusivo a vari·vel current_guest_is_out
+        // Garantindo acesso exclusivo a vari√°vel current_guest_is_out
         pthread_mutex_lock(&mutex_guest_out);
         current_guest_is_out = 1;
         pthread_mutex_unlock(&mutex_guest_out);
@@ -260,7 +266,7 @@ void* guest_interface_service(void *arg)
     return nullptr;
 }
 
-// Recebendo e respondendo pacotes do tipo SLEEP SERVICE DISCOVERY que chegaram atravÈs de broadcast.
+// Recebendo e respondendo pacotes do tipo SLEEP_SERVICE_DISCOVERY que chegaram atrav√©s de broadcast.
 // SERVIDOR
 void* manager_discovery_service(void *arg)
 {
@@ -268,39 +274,40 @@ void* manager_discovery_service(void *arg)
     int manager_socket_descriptor = socket(AF_INET, SOCK_DGRAM, 0);
     if (manager_socket_descriptor < 0)
     {
-        cout << "MANAGER: Erro na criaÁ„o do socket [DESCOBERTA]." << endl;
+        cout << "MANAGER: Erro na cria√ß√£o do socket [DESCOBERTA]." << endl;
         exit(1);
     }
 
-    // Setando o socket para a opÁ„o broadcast (habilitar o receive de broadcast messages)
-    if (setsockopt(manager_socket_descriptor, SOL_SOCKET, SO_BROADCAST, &(int){1}, sizeof(int)) < 0)
+    // Setando a op√ß√£o de broadcast do socket (habilitando o receive de broadcast messages)
+    int enable_broadcast = 1;
+    if (setsockopt(manager_socket_descriptor, SOL_SOCKET, SO_BROADCAST, &enable_broadcast, sizeof(int)) < 0)
     {
         cout << "MANAGER: Erro ao setar o modo broadcast do socket [DESCOBERTA]." << endl;
         close(manager_socket_descriptor);
         exit(1);
     }
 
-    ////////////////////////////////// CONFIGURANDO ENDERE«OS //////////////////////////////////
-    struct sockaddr_in manager_address;      // endereÁo local do manager
-    struct sockaddr_in guest_address;        // endereÁo de onde vem o pacote (que ser· do participante)
+    ////////////////////////////////// CONFIGURANDO ENDEREÔøΩOS //////////////////////////////////
+    struct sockaddr_in manager_address;      // endere√ßo local do manager
+    struct sockaddr_in guest_address;        // endere√ßo de onde vem o pacote (que ser√° do participante)
     socklen_t address_len = sizeof(struct sockaddr_in);
 
     manager_address.sin_family = AF_INET;
 	manager_address.sin_port = htons(PORT_DISCOVERY_SERVICE);  // recebe na porta PORT_DISCOVERY_SERVICE
-	manager_address.sin_addr.s_addr = htonl(INADDR_ANY);       // qualquer IP da m·quina
+	manager_address.sin_addr.s_addr = htonl(INADDR_ANY);
     ////////////////////////////////////////////////////////////////////////////////////////////
 
-    // EndereÁando o socket
+    // Endere√ßando o socket
     if (bind(manager_socket_descriptor, (struct sockaddr*) &manager_address, address_len) < 0)
     {
-        cout << "MANAGER: Erro ao endereÁar o socket [DESCOBERTA]." << endl;
+        cout << "MANAGER: Erro ao endere√ßar o socket [DESCOBERTA]." << endl;
         close(manager_socket_descriptor);
         exit(1);
     }
 
     ////////////////////////////////// CONFIGURANDO MENSAGEM ///////////////////////////////////
-    packet* guest_message = new packet();    // mensagem que ser· recebida do participante
-    packet* manager_message = new packet();  // mensagem de resposta que ser· enviada pelo manager
+    packet* guest_message = new packet();    // mensagem que ser√° recebida do participante
+    packet* manager_message = new packet();  // mensagem de resposta que ser√° enviada pelo manager
     size_t  message_len = sizeof(packet);
 
     manager_message->type = SLEEP_SERVICE_DISCOVERY;
@@ -313,28 +320,23 @@ void* manager_discovery_service(void *arg)
         if (recvfrom(manager_socket_descriptor, guest_message, message_len, 0,(struct sockaddr *) &guest_address, &address_len) < 0)
         {
             cout << "MANAGER: Erro ao receber mensagem de participante [DESCOBERTA]." << endl;
-            free(guest_message);
-            free(manager_message);
             close(manager_socket_descriptor);
             exit(1);
         }
         else
         {
-            // Se encontrou um participante, envia resposta
+            // Se encontrou um participante, envia resposta de confirma√ß√£o
             if (guest_message->type == SLEEP_SERVICE_DISCOVERY)
             {
                 if (sendto(manager_socket_descriptor, manager_message, message_len, 0,(struct sockaddr *) &guest_address, address_len) < 0)
                 {
                     cout << "MANAGER: Erro ao enviar mensagem a participante [DESCOBERTA]." << endl;
-                    free(guest_message);
-                    free(manager_message);
                     close(manager_socket_descriptor);
                     exit(1);
                 }
                 // Adiciona na tabela de paticipantes
                 guest new_guest = parse_payload(guest_message->payload);
                 new_guest.status = "awake";
-
                 // Garantindo acesso exclusivo a tabela
                 pthread_mutex_lock(&mutex_table);
                 guests.addGuest(new_guest);
@@ -343,14 +345,11 @@ void* manager_discovery_service(void *arg)
             }
         }
     }
-    free(guest_message);
-    free(manager_message);
     close(manager_socket_descriptor);
-
     return nullptr;
 }
 
-// Enviando pacotes do tipo SLEEP STATUS REQUEST para as estaÁıes j· conhecidas e processa resposta.
+// Enviando pacotes do tipo SLEEP_STATUS_REQUEST para as esta√ß√µes j√° conhecidas e processando a resposta.
 // CLIENTE
 void* manager_monitoring_service(void *arg)
 {
@@ -358,12 +357,13 @@ void* manager_monitoring_service(void *arg)
     int manager_socket_descriptor = socket(AF_INET, SOCK_DGRAM, 0);
     if (manager_socket_descriptor < 0)
     {
-        cout << "MANAGER: Erro na criaÁ„o do socket [MONITORAMENTO]." << endl;
+        cout << "MANAGER: Erro na cria√ß√£o do socket [MONITORAMENTO]." << endl;
         exit(1);
     }
 
-    // Setando a a opÁ„o REUSEADDR do socket (v·rios participantes se conectando na mesma porta do manager)
-    if (setsockopt(manager_socket_descriptor, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int)) < 0)
+    // Setando a a op√ß√£o REUSEADDR do socket
+    int enable_reuseaddr = 1;
+    if (setsockopt(manager_socket_descriptor, SOL_SOCKET, SO_REUSEADDR, &enable_reuseaddr, sizeof(int)) < 0)
     {
         cout << "MANAGER: Erro ao setar o modo REUSEADDR do socket [MONITORAMENTO]." << endl;
         close(manager_socket_descriptor);
@@ -372,7 +372,7 @@ void* manager_monitoring_service(void *arg)
 
     // Setando um timeout
     struct timeval timeout;
-    timeout.tv_sec = 5;
+    timeout.tv_sec = 4;    // 4 segundos esperando resposta
     timeout.tv_usec = 0;
     if (setsockopt(manager_socket_descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0)
     {
@@ -381,16 +381,16 @@ void* manager_monitoring_service(void *arg)
         exit(1);
     }
 
-    ////////////////////////////////// CONFIGURANDO ENDERE«OS //////////////////////////////////
-    struct sockaddr_in guest_address;     // endereÁo que receber· cada participante para onde mandaremos e receberemos mensagem
+    ////////////////////////////////// CONFIGURANDO ENDERE√áOS //////////////////////////////////
+    struct sockaddr_in guest_address;     // endere√ßo que receber√° cada participante para onde mandaremos e receberemos mensagem
     socklen_t address_len = sizeof(struct sockaddr_in);
 
     guest_address.sin_family = AF_INET;
     ////////////////////////////////////////////////////////////////////////////////////////////
 
     ////////////////////////////////// CONFIGURANDO MENSAGEM ///////////////////////////////////
-    packet* manager_message = new packet();    // mensagem que ser· enviada para os participantes
-    packet* guest_message = new packet();      // mensagem de resposta que ser· recebida dos participantes
+    packet* manager_message = new packet();    // mensagem que ser√° enviada para os participantes
+    packet* guest_message = new packet();      // mensagem de resposta que ser√° recebida dos participantes
     size_t  message_len = sizeof(packet);
 
     manager_message->type = SLEEP_STATUS_REQUEST;
@@ -399,21 +399,19 @@ void* manager_monitoring_service(void *arg)
 
     while (1)
     {
-        // Pega a list de IPs dos participantes
+        // Pega a lista de IPs dos participantes
         pthread_mutex_lock(&mutex_table);
-        list<string> guests_list_ip_adresses = guests.returnGuestsIpAddressList();
+        vector<string> guests_list_ip_adresses = guests.returnGuestsIpAddressList();
         pthread_mutex_unlock(&mutex_table);
 
-        // Envia mensagens para todos os participantes
-        for(list<string>::iterator it = guests_list_ip_adresses.begin(); it != guests_list_ip_adresses.end(); ++it)
+        // Envia mensagens para todos os IPs
+        for(vector<string>::iterator it = guests_list_ip_adresses.begin(); it != guests_list_ip_adresses.end(); ++it)
         {
             guest_address.sin_port = htons(PORT_MONITORING_SERVICE);
-            inet_aton(it->c_str(), (in_addr *) &guest_address.sin_addr.s_addr);  // envia em (porta PORT_MONITORING_SERVICE, ip do participante)
+            inet_aton(it->c_str(), &guest_address.sin_addr);  // envia para (PORT_MONITORING_SERVICE, IP do participante)
 
             if (sendto(manager_socket_descriptor, manager_message, message_len, 0,(struct sockaddr *) &guest_address, address_len) < 0) {
                 cout << "MANAGER: Erro ao enviar mensagem para algum participante." << endl;
-                free(manager_message);
-                free(guest_message);
                 close(manager_socket_descriptor);
                 exit(1);
             }
@@ -421,10 +419,13 @@ void* manager_monitoring_service(void *arg)
             // Esperando resposta chegar
             if (recvfrom(manager_socket_descriptor, guest_message, message_len, 0,(struct sockaddr *) &guest_address, &address_len) < 0)
             {
-                // Se resposta n„o chegou, depois do timeout, atualiza status do participante para "asleep"
+                // Se resposta n√£o chegou
                 pthread_mutex_lock(&mutex_table);
-                guests.guestSlept(*it);
-                guests.printTable();
+                if (guests.getGuestStatus(*it) == "awake")
+                {
+                    guests.guestSlept(*it); // Atualiza status do participante para "asleep"
+                    guests.printTable();    // e printa
+                }
                 pthread_mutex_unlock(&mutex_table);
             }
             else
@@ -432,35 +433,35 @@ void* manager_monitoring_service(void *arg)
                 // Se resposta chegou, e foi do tipo SLEEP_STATUS_REQUEST
                 if (guest_message->type == SLEEP_STATUS_REQUEST)
                 {
-                    // Se foi avisando que est· acordado, atualiza status do participante para "awake"
+                    // Se foi avisando que est√° acordado
                     if (strcmp(guest_message->payload, STATUS_AWAKE) == 0)
                     {
                         pthread_mutex_lock(&mutex_table);
-                        guests.wakeGuest(*it);
-                        guests.printTable();
+                        if (guests.getGuestStatus(*it) == "asleep")
+                        {
+                            guests.wakeGuest(*it); // Atualiza status do participante para "awake"
+                            guests.printTable();   // e printa
+                        }
                         pthread_mutex_unlock(&mutex_table);
                     }
-                    // Se foi avisando que est· saindo, remove participante da tabela
+                    // Se foi avisando que est√° saindo
                     if (strcmp(guest_message->payload, STATUS_QUIT) == 0)
                     {
                         pthread_mutex_lock(&mutex_table);
-                        guests.deleteGuest(*it);
-                        guests.printTable();
+                        guests.deleteGuest(*it);   // Remove participante da tabela
+                        guests.printTable();       // e printa
                         pthread_mutex_unlock(&mutex_table);
                     }
                 }
             }
         }
     }
-    free(manager_message);
-    free(guest_message);
     close(manager_socket_descriptor);
-
     return nullptr;
 }
 
-// Fica processando a entrada do usu·rio pra ver se vai vir um pedido de WAKEUP <hostname>.
-// Se chegar, manda um pacote m·gico wake on lan para o hostname.
+// Fica processando a entrada do usu√°rio pra ver se vai vir um pedido de WAKEUP <hostname>.
+// Se chegar, manda um comando wakeonlan para seu endere√ßo MAC.
 void* manager_interface_service(void *arg)
 {
     string WAKEUP, hostname;
@@ -563,34 +564,59 @@ string get_mac_address()
 
 string get_ip_address()
 {
-    char hostname[256];
-    if (gethostname(hostname, sizeof(hostname)) != 0)
+    struct ifaddrs *ifaddr, *ifa;
+    int family, s;
+    char host[NI_MAXHOST];
+    string ip_address;
+
+    if (getifaddrs(&ifaddr) == -1)
     {
-        cout << "Falha no get_ip_address." << endl;
+        cerr << "Falha no get_ip_address." << endl;
         return "";
     }
 
-    struct hostent *host_entry = gethostbyname(hostname);
-    if (host_entry == nullptr)
+    for (ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next)
     {
-        cout << "Falha no get_ip_address." << endl;
-        return "";
+        if (ifa->ifa_addr == nullptr)
+            continue;
+
+        family = ifa->ifa_addr->sa_family;
+
+        if (family == AF_INET)
+        {
+            s = getnameinfo(ifa->ifa_addr, sizeof(struct sockaddr_in), host, NI_MAXHOST, nullptr, 0, NI_NUMERICHOST);
+            if (s != 0)
+            {
+                cerr << "Falha no get_ip_address." << endl;
+                return "";
+            }
+            if (strcmp(ifa->ifa_name, "lo") != 0)
+            {
+                ip_address = host;
+                break;
+            }
+        }
     }
 
-    struct in_addr *addr = reinterpret_cast<struct in_addr *>(host_entry->h_addr);
-    string ip_address = inet_ntoa(*addr);
+    freeifaddrs(ifaddr);
+
+    if (ip_address.empty())
+    {
+        cerr << "Falha no get_ip_address." << endl;
+        return "";
+    }
     return ip_address;
 }
 
-char* pack_discovery_sending_message()
+string pack_discovery_sending_message()
 {
-    // Coleta nome do host, endereÁo mac e endereÁo IP
+    // Coleta nome do host, endere√ßo mac e endere√ßo IP
     string hostname = get_host_name();
     string mac_address = get_mac_address();
     string ip_address = get_ip_address();
 
     string message = hostname + ";" + mac_address + ";" + ip_address + ";";
-    return &message[0];
+    return message;
 }
 
 guest parse_payload(char* payload)
@@ -616,62 +642,17 @@ guest parse_payload(char* payload)
 
 void send_wake_on_lan_packet(string mac_address)
 {
-    // Criando o descritor do socket do manager
-    int manager_socket_descriptor = socket(AF_INET, SOCK_DGRAM, 0);
-    if (manager_socket_descriptor < 0)
-    {
-        cout << "MANAGER: Erro na criaÁ„o do socket [WAKEONLAN]." << endl;
+    char comando[256];
+    snprintf(comando, sizeof(comando), "wakeonlan %s", mac_address.c_str());
+
+    FILE* fp = popen(comando, "r");
+    if (fp == NULL) {
+        perror("Erro ao enviar WOL.");
         return;
     }
-
-    // Setando o socket para a opÁ„o de broadcast (habilitar o envio de broadcast messages)
-    if (setsockopt(manager_socket_descriptor, SOL_SOCKET, SO_BROADCAST, &(int){1}, sizeof(int)) < 0)
-    {
-        cout << "MANAGER: Erro ao setar o modo broadcast do socket [WAKEONLAN]." << endl;
-        close(manager_socket_descriptor);
-        return;
-    }
-
-    ////////////////////////////////// CONFIGURANDO ENDERE«OS //////////////////////////////////
-    struct sockaddr_in sending_address;     // endereÁo para onde mandaremos mensagem
-    socklen_t address_len = sizeof(struct sockaddr_in);
-
-    sending_address.sin_family = AF_INET;
-	sending_address.sin_port = htons(9);    // envia para a porta 9
-	sending_address.sin_addr.s_addr = htonl(INADDR_BROADCAST); // no endereÁo de broadcast
-
-    ////////////////////////////////////////////////////////////////////////////////////////////
-
-    ////////////////////////////////// CONFIGURANDO MENSAGEM ///////////////////////////////////
-    // Converte o endereÁo MAC para bytes
-    stringstream ss(mac_address);
-    vector<unsigned char> mac_address_in_bytes;
-    unsigned int byte;
-    while (ss >> hex >> byte)
-        mac_address_in_bytes.push_back(static_cast<unsigned char>(byte));
-
-    // Cria o pacote m·gico wake on lan (6 bytes 0xFF, seguido por 16 repetiÁıes do endereÁo MAC de 48 bits)
-    const int magic_packet_size = 102;
-    unsigned char magic_packet[magic_packet_size];
-    memset(magic_packet, 0xFF, 6);
-    for (int i = 6; i < magic_packet_size; i += 6)
-        memcpy(&magic_packet[i], &mac_address_in_bytes[0], 6);
-    ////////////////////////////////////////////////////////////////////////////////////////////
-
-    // Enviando pacote m·gico por broadcast
-    if (sendto(manager_socket_descriptor, magic_packet, magic_packet_size, 0,(struct sockaddr *) &sending_address, address_len) < 0)
-    {
-        cout << "MANAGER: Erro ao enviar pacote m·gico wol." << endl;
-        close(manager_socket_descriptor);
-        exit(1);
-    }
-
-    free(sending_message);
-    free(magic_packet);
-
-    close(manager_socket_descriptor);
-    return nullptr;
+    pclose(fp);
 }
+
 
 
 

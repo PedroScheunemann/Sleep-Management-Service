@@ -16,15 +16,12 @@ using namespace std;
 #include <csignal>
 #include <netdb.h>
 #include <arpa/inet.h>
-
-//#include <ifaddrs.h>
-//#include <cstdio>
-//#include <unistd.h>
-//#include <cstdlib>
+#include <vector>
+#include <cstdlib>
+#include <ifaddrs.h>
 
 #define PORT_DISCOVERY_SERVICE   8000
 #define PORT_MONITORING_SERVICE  4000
-#define PORT_WAKE_ON_LAN  9
 
 #define SLEEP_SERVICE_DISCOVERY  1
 #define SLEEP_STATUS_REQUEST     2
@@ -73,12 +70,16 @@ class guestTable{
             guestList.at(ip_address).status = "awake";
         }
 
-        list<string> returnGuestsIpAddressList()
+        string getGuestStatus(string ip_address)
         {
-            list<string> list_ip_addresses = {};
-            auto it = guestList.begin();
+            return guestList.at(ip_address).status;
+        }
+
+        vector<string> returnGuestsIpAddressList()
+        {
+            vector<string> list_ip_addresses;
             for (auto &i: guestList) {
-                list_ip_addresses.insert(it, i.second.ip_address);
+                list_ip_addresses.push_back(i.second.ip_address);
             }
             return list_ip_addresses;
         }
@@ -110,10 +111,6 @@ class guestTable{
         }
 };
 
-// Variáveis para o manager
-pthread_mutex_t mutex_table = PTHREAD_MUTEX_INITIALIZER;
-guestTable guests;
 
-// Variáveis para o participante
-pthread_mutex_t mutex_guest_out = PTHREAD_MUTEX_INITIALIZER;
-int current_guest_is_out = 0;
+
+
