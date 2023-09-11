@@ -179,9 +179,11 @@ void election_service()
     ////////////////////////////////////////////////////////////////////////////////////////////
 
 
-    int i_could_be_the_manager = 1, i_am_the_manager = 0;
-    while (i_could_be_the_manager && !i_am_the_manager)
+    int election_ended = 0, waiting_for_coordinator;
+    while (!election_ended)
     {
+        waiting_for_coordinator = 0;
+
         // Pega a lista de IPs dos participantes
         pthread_mutex_lock(&g_mutex_table);
         vector<string> guests_list_ip_adresses = g_my_guests.returnGuestsIpAddressList();
@@ -208,35 +210,34 @@ void election_service()
                     if (guest_message->type == ANSWER)
                     {
                         // Não posso mais me denominar como líder, devo esperar resposta de coordinator
-                        i_could_be_the_manager = 0;
+                        waiting_for_coordinator = 1;
                         break;
                     }
                 }
             }
         }
         // aqui eu devo: setar um socket servidor para esperar uma resposta de coordinator. se ela chegar: rodo guestprogram(). senão: reinicia o loop
-        if (!i_could_be_the_manager)
+        if (waiting_for_coordinator)
         {
-            // Se não recebeu mensagem de coordinator, reinicia a eleição com:
-            i_could_be_the_manager = 1;
+            // Se recebeu mensagem de coordinator, eleição termina: election_ended = 1;
+            // Senão, eleição continua.
         }
         else
         {
-            // Se chegou ao fim, e eu posso ser o manager, eu serei o manager
-            i_am_the_manager = 1;
+            election_ended = 1;
         }
     }
     close(socket_descriptor);
 
-    // Se nenhuma resposta de answer chegou, me auto-intitulo líder
-    if(i_am_the_manager)
-    {
-        manager_program();
-    }
-    // Se um líder foi eleito, viro participante
-    else
+    // Se terminou a eleição enquanto estava esperando por coordinator, então sou um participante
+    if(waiting_for_coordinator)
     {
         guest_program();
+    }
+    // Senão, sou o novo líder
+    else
+    {
+        manager_program();
     }
 }
 
