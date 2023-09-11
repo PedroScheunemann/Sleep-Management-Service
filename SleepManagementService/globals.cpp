@@ -22,18 +22,23 @@ using namespace std;
 
 #define PORT_DISCOVERY_SERVICE   8000
 #define PORT_MONITORING_SERVICE  4000
+#define PORT_ELECTION_SERVICE    2000
 
 #define SLEEP_SERVICE_DISCOVERY  1
-#define SLEEP_STATUS_REQUEST     2
+#define GUEST_DISCOVERED         2
 
-#define GUEST_DISCOVERED         "I FOUND YOU"
-#define STATUS_REQUEST           "sleep status needed"
-#define STATUS_AWAKE             "sleep status awake"
-#define STATUS_QUIT              "sleep status quit"
+#define SLEEP_STATUS_REQUEST     3
+#define STATUS_AWAKE             4
+#define STATUS_QUIT              5
+
+#define ELECTION                 6
+#define COORDINATOR              7
+#define ANSWER                   8
 
 struct packet {
     uint16_t type;
     char payload[256];
+    guestTable guests;
 };
 
 struct guest{
@@ -46,9 +51,25 @@ struct guest{
 class guestTable{
 
     public:
+        map<string, guest> guestList;
+        int version = 0;
+
         guestTable(){}
 
-        map<string, guest> guestList;
+        guestTable operator=(guestTable& guests)
+        {
+            version = guests.version;
+
+            if (!guestList.empty())
+            {
+                guestList.clear()
+            }
+
+            for (auto &it: guests)
+            {
+                guestList.addGuest(it.second);
+            }
+        }
 
         void addGuest(guest g)
         {
@@ -78,18 +99,18 @@ class guestTable{
         vector<string> returnGuestsIpAddressList()
         {
             vector<string> list_ip_addresses;
-            for (auto &i: guestList) {
-                list_ip_addresses.push_back(i.second.ip_address);
+            for (auto &it: guestList) {
+                list_ip_addresses.push_back(it.second.ip_address);
             }
             return list_ip_addresses;
         }
 
         string returnGuestMacAddress(string hostname)
         {
-            for (auto &i: guestList) {
-                if (i.second.hostname == hostname)
+            for (auto &it: guestList) {
+                if (it.second.hostname == hostname)
                 {
-                    return i.second.mac_address;
+                    return it.second.mac_address;
                 }
             }
             return "";
@@ -100,12 +121,12 @@ class guestTable{
             cout << left;
             cout << "--------------------------------------------------------------------------\n";
             cout << "|Hostname \t|MAC Address      |IP Address     |Status|\n";
-            for(auto &i: guestList)
+            for(auto &it: guestList)
             {
-                cout << "|" << setw(15) << i.second.hostname;
-                cout << "|" << i.second.mac_address;
-                cout << "|" << setw(15) << i.second.ip_address;
-                cout << "|" << setw(6) << i.second.status << "|\n";
+                cout << "|" << setw(15) << it.second.hostname;
+                cout << "|" << it.second.mac_address;
+                cout << "|" << setw(15) << it.second.ip_address;
+                cout << "|" << setw(6) << it.second.status << "|\n";
             }
             cout << "--------------------------------------------------------------------------\n";
         }
