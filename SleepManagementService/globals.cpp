@@ -20,26 +20,21 @@ using namespace std;
 #include <cstdlib>
 #include <ifaddrs.h>
 
-#define PORT_DISCOVERY_SERVICE   8000
-#define PORT_MONITORING_SERVICE  4000
-#define PORT_ELECTION_SERVICE    2000
+#define PORT_DISCOVERY_SERVICE   63485
+#define PORT_MONITORING_SERVICE  64321
+#define PORT_ELECTION_SERVICE    62387
 
-#define SLEEP_SERVICE_DISCOVERY  1
-#define GUEST_DISCOVERED         2
+#define SLEEP_SERVICE_DISCOVERY    1
+#define GUEST_DISCOVERED           2
 
-#define SLEEP_STATUS_REQUEST     3
-#define STATUS_AWAKE             4
-#define STATUS_QUIT              5
+#define SLEEP_STATUS_REQUEST       3
+#define STATUS_AWAKE               4
+#define STATUS_QUIT                5
+#define STATUS_YOU_ARE_NOT_MANAGER 6
 
-#define ELECTION                 6
-#define COORDINATOR              7
-#define ANSWER                   8
-
-struct packet {
-    uint16_t type;
-    char payload[256];
-    guestTable guests;
-};
+#define ELECTION                   7
+#define COORDINATOR                8
+#define ANSWER                     9
 
 struct guest{
     string hostname;
@@ -52,22 +47,24 @@ class guestTable{
 
     public:
         map<string, guest> guestList;
-        int version = 0;
+        int version;
+        string manager_ip;
 
-        guestTable(){}
+        guestTable() : version(0), manager_ip("Electing") {}
 
-        guestTable operator=(guestTable& guests)
+        void clone_guests(guestTable& guests)
         {
             version = guests.version;
+            manager_ip = guests.manager_ip;
 
             if (!guestList.empty())
             {
-                guestList.clear()
+                guestList.clear();
             }
 
-            for (auto &it: guests)
+            for (auto &it: guests.guestList)
             {
-                guestList.addGuest(it.second);
+                addGuest(it.second);
             }
         }
 
@@ -119,7 +116,7 @@ class guestTable{
         void printTable() {
             system("clear");
             cout << left;
-            cout << "--------------------------------------------------------------------------\n";
+            cout << "----------------------------------------------------------\n";
             cout << "|Hostname \t|MAC Address      |IP Address     |Status|\n";
             for(auto &it: guestList)
             {
@@ -128,10 +125,14 @@ class guestTable{
                 cout << "|" << setw(15) << it.second.ip_address;
                 cout << "|" << setw(6) << it.second.status << "|\n";
             }
-            cout << "--------------------------------------------------------------------------\n";
+            cout << "|Manager: " << setw(47) << manager_ip << "|" << endl;
+            cout << "----------------------------------------------------------\n";
         }
 };
 
-
-
-
+struct packet {
+    uint16_t type;
+    char payload[256];
+    char payload2[256*16];
+    //guestTable guests;
+};

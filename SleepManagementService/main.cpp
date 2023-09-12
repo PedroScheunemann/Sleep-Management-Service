@@ -11,7 +11,10 @@ pthread_mutex_t g_mutex_election_occurring = PTHREAD_MUTEX_INITIALIZER;
 int g_election_occurring = 0;
 
 pthread_mutex_t g_mutex_guest_out = PTHREAD_MUTEX_INITIALIZER;
-int g_out_of_service = 0;
+int g_guest_out_of_service = 0;
+
+pthread_mutex_t g_mutex_manager_out = PTHREAD_MUTEX_INITIALIZER;
+int g_manager_out_of_service = 0;
 
 // Funções do participante
 static void guest_program();
@@ -35,6 +38,67 @@ void send_wake_on_lan_packet(string mac_address);
 void discovery_service();
 void election_service();
 void setup_my_info();
+
+//-------------------------------------------------------------------------
+// Modify the serializeGuestTable function to accept a packet pointer
+void serializeGuestTable(const guestTable& table, packet* p) {
+    // Serialize guestTable into a string as before
+    string serializedData;
+
+    // Add version and manager_ip to the serialized data
+    serializedData += to_string(table.version) + "\n";
+    serializedData += table.manager_ip + "\n";
+
+    // Serialize each guest entry and add it to the serialized data
+    for (const auto& entry : table.guestList) {
+        serializedData += entry.first + "," +
+                         entry.second.hostname + "," +
+                         entry.second.mac_address + "," +
+                         entry.second.ip_address + "," +
+                         entry.second.status + "\n";
+    }
+
+    // Copy the serialized data into the packet's payload2 field
+    strncpy(p->payload2, serializedData.c_str(), sizeof(p->payload2));
+}
+
+// Modify the unserializeGuestTable function to accept a packet pointer
+void unserializeGuestTable(const packet* p, guestTable& table) {
+    // Initialize the table
+    table.guestList.clear();
+
+    // Deserialize the payload2 data
+    istringstream iss(p->payload2);
+    string line;
+
+    // Read the version and manager_ip from the first two lines
+    getline(iss, line);
+    table.version = stoi(line);
+
+    getline(iss, line);
+    table.manager_ip = line;
+
+    // Deserialize guest entries
+    while (getline(iss, line)) {
+        istringstream entryStream(line);
+        vector<string> tokens;
+        string token;
+
+        while (getline(entryStream, token, ',')) {
+            tokens.push_back(token);
+        }
+
+        if (tokens.size() == 5) {
+            guest g;
+            g.hostname = tokens[1];
+            g.mac_address = tokens[2];
+            g.ip_address = tokens[3];
+            g.status = tokens[4];
+            table.guestList[tokens[0]] = g;
+        }
+    }
+}
+//-------------------------------------------------------------------------
 
 int main(int argc, char **argv)
 {
@@ -85,8 +149,8 @@ void discovery_service()
 
     // Setando um timeout
     struct timeval timeout;
-    timeout.tv_sec = 1;
-    timeout.tv_usec = 0;
+    timeout.tv_sec = 0;
+    timeout.tv_usec = 5000;
     if (setsockopt(socket_descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0)
     {
         cout << "Erro ao setar o timeout do socket [DESCOBERTA]." << endl;
@@ -120,6 +184,7 @@ void discovery_service()
         close(socket_descriptor);
         exit(1);
     }
+
     // Esperando resposta do manager chegar
     if (recvfrom(socket_descriptor, manager_message, message_len, 0,(struct sockaddr *) &manager_address, &address_len) < 0)
     {
@@ -129,9 +194,17 @@ void discovery_service()
     else
     {
         close(socket_descriptor);
-        g_my_guests = manager_message->guests; // Se chegou, atualiza a tabela local
+
+        pthread_mutex_lock(&g_mutex_election_occurring);
+        g_election_occurring = 0;
+        pthread_mutex_unlock(&g_mutex_election_occurring);
+
+        pthread_mutex_lock(&g_mutex_table);
+        unserializeGuestTable(manager_message, g_my_guests);   // Se chegou, atualiza a tabela local
         g_my_guests.printTable();
-        guest_program();                       // Roda como participante
+        pthread_mutex_unlock(&g_mutex_table);
+
+        guest_program();                                       // e roda como participante
     }
 }
 
@@ -140,9 +213,9 @@ void discovery_service()
 // Se alguém responder, espera resposta com o líder.
 void election_service()
 {
-    pthread_mutex_lock(&g_election_occurring);
+    pthread_mutex_lock(&g_mutex_election_occurring);
     g_election_occurring = 1;
-    pthread_mutex_unlock(&g_election_occurring);
+    pthread_mutex_unlock(&g_mutex_election_occurring);
 
     // Criando o descritor do socket
     int socket_descriptor = socket(AF_INET, SOCK_DGRAM, 0);
@@ -154,8 +227,8 @@ void election_service()
 
     // Setando um timeout
     struct timeval timeout;
-    timeout.tv_sec = 1;
-    timeout.tv_usec = 0;
+    timeout.tv_sec = 0;
+    timeout.tv_usec = 5000;
     if (setsockopt(socket_descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0)
     {
         cout << "Erro ao setar o timeout do socket [ELEIÇÃO]." << endl;
@@ -178,65 +251,59 @@ void election_service()
     sending_message->type = ELECTION;
     ////////////////////////////////////////////////////////////////////////////////////////////
 
+    int waiting_for_coordinator = 0;
+    // Pega a lista de IPs dos participantes
+    pthread_mutex_lock(&g_mutex_table);
+    vector<string> guests_list_ip_adresses = g_my_guests.returnGuestsIpAddressList();
+    pthread_mutex_unlock(&g_mutex_table);
 
-    int election_ended = 0, waiting_for_coordinator;
-    while (!election_ended)
+    // Itera todos os IPs
+    for(vector<string>::iterator it = guests_list_ip_adresses.begin(); it != guests_list_ip_adresses.end(); ++it)
     {
-        waiting_for_coordinator = 0;
-
-        // Pega a lista de IPs dos participantes
-        pthread_mutex_lock(&g_mutex_table);
-        vector<string> guests_list_ip_adresses = g_my_guests.returnGuestsIpAddressList();
-        pthread_mutex_unlock(&g_mutex_table);
-
-        // Itera todos os IPs
-        for(vector<string>::iterator it = guests_list_ip_adresses.begin(); it != guests_list_ip_adresses.end(); ++it)
+        if (stoi(*it) > stoi(g_my_ip_address))  // Envia mensagem de eleição para todos os IPs maiores
         {
-            if (stoi(*it) > stoi(g_my_ip_address))  // Envia mensagem de eleição para todos os IPs maiores
+            sending_address.sin_port = htons(PORT_ELECTION_SERVICE);
+            inet_aton(it->c_str(), &sending_address.sin_addr);  // Para (PORT_ELECTION_SERVICE, IP do participante)
+
+            if (sendto(socket_descriptor, sending_message, message_len, 0,(struct sockaddr *) &sending_address, address_len) < 0) {
+                cout << "ELECTION: Erro ao enviar mensagem para algum participante." << endl;
+                close(socket_descriptor);
+                exit(1);
+            }
+
+            // Esperando resposta chegar até timeout
+            if (recvfrom(socket_descriptor, guest_message, message_len, 0,(struct sockaddr *) &sending_address, &address_len) >= 0)
             {
-                sending_address.sin_port = htons(PORT_ELECTION_SERVICE);
-                inet_aton(it->c_str(), &sending_address.sin_addr);  // Para (PORT_ELECTION_SERVICE, IP do participante)
-
-                if (sendto(socket_descriptor, sending_message, message_len, 0,(struct sockaddr *) &sending_address, address_len) < 0) {
-                    cout << "ELECTION: Erro ao enviar mensagem para algum participante." << endl;
-                    close(socket_descriptor);
-                    exit(1);
-                }
-
-                // Esperando resposta chegar até timeout
-                if (recvfrom(socket_descriptor, guest_message, message_len, 0,(struct sockaddr *) &sending_address, &address_len) >= 0)
+                // Se a resposta que chegou foi answer
+                if (guest_message->type == ANSWER)
                 {
-                    // Se a resposta que chegou foi answer
-                    if (guest_message->type == ANSWER)
-                    {
-                        // Não posso mais me denominar como líder, devo esperar resposta de coordinator
-                        waiting_for_coordinator = 1;
-                        break;
-                    }
+                    // Não posso mais me denominar como líder, devo esperar resposta de coordinator
+                    waiting_for_coordinator = 1;
+                    break;
                 }
             }
-        }
-        // aqui eu devo: setar um socket servidor para esperar uma resposta de coordinator. se ela chegar: rodo guestprogram(). senão: reinicia o loop
-        if (waiting_for_coordinator)
-        {
-            // Se recebeu mensagem de coordinator, eleição termina: election_ended = 1;
-            // Senão, eleição continua.
-        }
-        else
-        {
-            election_ended = 1;
         }
     }
     close(socket_descriptor);
 
-    // Se terminou a eleição enquanto estava esperando por coordinator, então sou um participante
-    if(waiting_for_coordinator)
+    // Se recebeu alguma mensagem answer, fica esperando algum manager, senão reinicia eleição
+    if (waiting_for_coordinator)
     {
-        guest_program();
+        discovery_service();
     }
     // Senão, sou o novo líder
     else
     {
+        pthread_mutex_lock(&g_mutex_election_occurring);
+        g_election_occurring = 0;
+        pthread_mutex_unlock(&g_mutex_election_occurring);
+
+        pthread_mutex_lock(&g_mutex_table);
+        g_my_guests.version += 1;
+        g_my_guests.manager_ip = g_my_ip_address;
+        g_my_guests.printTable();
+        pthread_mutex_unlock(&g_mutex_table);
+
         manager_program();
     }
 }
@@ -352,9 +419,9 @@ void* guest_election_discovery_service(void *arg)
                 exit(1);
             }
 
-            pthread_mutex_lock(&g_election_occurring);
-            election_occurring = g_election_occurring;
-            pthread_mutex_unlock(&g_election_occurring);
+            pthread_mutex_lock(&g_mutex_election_occurring);
+            int election_occurring = g_election_occurring;
+            pthread_mutex_unlock(&g_mutex_election_occurring);
 
             // Inicia uma eleição, caso já não estiver em uma
             if (!election_occurring)
@@ -417,6 +484,7 @@ void* guest_monitoring_service(void *arg)
     ////////////////////////////////////////////////////////////////////////////////////////////
 
     int manager_out = 0, out_of_service, election_occurring;
+    guestTable gt;
     while (1)
     {
         // Espera receber mensagem do manager até timeout
@@ -427,21 +495,12 @@ void* guest_monitoring_service(void *arg)
         }
         else
         {
-            // Se manager mandou tabela atualizada, faz uma cópia profunda
-            pthread_mutex_lock(&g_mutex_table);
-            if (manager_message->guests->version > g_my_guests.version)
-            {
-                g_my_guests = manager_message->guests;
-                g_my_guests.printTable();
-            }
-            pthread_mutex_unlock(&g_mutex_table);
-
             // Se manager mandou mensagem de monitoramento, responde
             if (manager_message->type == SLEEP_STATUS_REQUEST)
             {
-                pthread_mutex_lock(&g_out_of_service);
-                out_of_service = g_out_of_service;
-                pthread_mutex_unlock(&g_out_of_service);
+                pthread_mutex_lock(&g_mutex_guest_out);
+                out_of_service = g_guest_out_of_service;
+                pthread_mutex_unlock(&g_mutex_guest_out);
 
                 // Se o participante quer sair do serviço, a mensagem será avisando que quer sair
                 if (out_of_service)
@@ -453,6 +512,22 @@ void* guest_monitoring_service(void *arg)
                 {
                     guest_message->type = STATUS_AWAKE;
                 }
+
+                unserializeGuestTable(manager_message, gt);
+
+                pthread_mutex_lock(&g_mutex_table);
+                // Se um manager diferente mandou mensagem (um que era líder e acordou), a mensagem será avisando que ele não é mais líder
+                if (gt.manager_ip != g_my_guests.manager_ip)
+                {
+                    guest_message->type = STATUS_YOU_ARE_NOT_MANAGER;
+                }
+                // Se manager atual mandou tabela atualizada, faz uma cópia profunda
+                else if (gt.version > g_my_guests.version)
+                {
+                    g_my_guests.clone_guests(gt);
+                    g_my_guests.printTable();
+                }
+                pthread_mutex_unlock(&g_mutex_table);
 
                 // Envia a mensagem para o manager
                 if (sendto(guest_socket_descriptor, guest_message, message_len, 0,(struct sockaddr *) &manager_address, address_len) < 0)
@@ -466,9 +541,9 @@ void* guest_monitoring_service(void *arg)
     }
     close(guest_socket_descriptor);
 
-    pthread_mutex_lock(&g_election_occurring);
+    pthread_mutex_lock(&g_mutex_election_occurring);
     election_occurring = g_election_occurring;
-    pthread_mutex_unlock(&g_election_occurring);
+    pthread_mutex_unlock(&g_mutex_election_occurring);
 
     // Se manager não respondeu, inicia uma eleição, caso já não estiver em uma
     if (manager_out && !election_occurring)
@@ -490,7 +565,7 @@ void* guest_interface_service(void *arg)
     {
         // Garantindo acesso exclusivo a variável current_guest_is_out
         pthread_mutex_lock(&g_mutex_guest_out);
-        g_out_of_service = 1;
+        g_guest_out_of_service = 1;
         pthread_mutex_unlock(&g_mutex_guest_out);
     }
     return nullptr;
@@ -557,6 +632,7 @@ void* manager_discovery_service(void *arg)
             // Se encontrou um participante
             if (guest_message->type == SLEEP_SERVICE_DISCOVERY)
             {
+
                 // Adiciona na tabela de paticipantes
                 guest new_guest = parse_payload(guest_message->payload);
                 new_guest.status = "awake";
@@ -565,7 +641,7 @@ void* manager_discovery_service(void *arg)
                 g_my_guests.version += 1;
                 g_my_guests.addGuest(new_guest);
                 g_my_guests.printTable();
-                manager_message->guests = g_my_guests;  // Atualiza a mensagem enviada com a tabela
+                serializeGuestTable(g_my_guests, manager_message);
                 pthread_mutex_unlock(&g_mutex_table);
 
                 // Envia resposta de confirmação, com a tabela
@@ -576,6 +652,13 @@ void* manager_discovery_service(void *arg)
                     exit(1);
                 }
             }
+        }
+        pthread_mutex_lock(&g_mutex_manager_out);
+        int manager_out_of_service = g_manager_out_of_service;
+        pthread_mutex_unlock(&g_mutex_manager_out);
+        if (manager_out_of_service)
+        {
+            break;
         }
     }
     close(manager_socket_descriptor);
@@ -628,12 +711,15 @@ void* manager_monitoring_service(void *arg)
         pthread_mutex_unlock(&g_mutex_table);
 
         // Envia mensagens para todos os IPs
-        for(vector<string>::iterator it = guests_list_ip_adresses.begin(); it != guests_list_ip_adresses.end(); ++it)
+        for(vector<string>::iterator it = guests_list_ip_adresses.begin(); it != guests_list_ip_adresses.end() && (*it) != g_my_ip_address; ++it)
         {
             guest_address.sin_port = htons(PORT_MONITORING_SERVICE);
             inet_aton(it->c_str(), &guest_address.sin_addr);  // envia para (PORT_MONITORING_SERVICE, IP do participante)
 
-            manager_message->guests = g_my_guests;  // Deve estar dentro do loop, pois g_my_guests pode ser atualizada a cada mensagem enviada
+            pthread_mutex_lock(&g_mutex_table);
+            serializeGuestTable(g_my_guests, manager_message);
+            pthread_mutex_unlock(&g_mutex_table);
+
             if (sendto(manager_socket_descriptor, manager_message, message_len, 0,(struct sockaddr *) &guest_address, address_len) < 0) {
                 cout << "MANAGER: Erro ao enviar mensagem para algum participante." << endl;
                 close(manager_socket_descriptor);
@@ -668,13 +754,23 @@ void* manager_monitoring_service(void *arg)
                     pthread_mutex_unlock(&g_mutex_table);
                 }
                 // Se foi avisando que está saindo
-                if (guest_message->type == STATUS_QUIT)
+                else if (guest_message->type == STATUS_QUIT)
                 {
                     pthread_mutex_lock(&g_mutex_table);
                     g_my_guests.version += 1;
                     g_my_guests.deleteGuest(*it);   // Remove participante da tabela
                     g_my_guests.printTable();       // e printa
                     pthread_mutex_unlock(&g_mutex_table);
+                }
+                // Se foi avisando que não sou mais líder
+                else if (guest_message->type == STATUS_YOU_ARE_NOT_MANAGER)
+                {
+                    close(manager_socket_descriptor);
+                    pthread_mutex_lock(&g_mutex_manager_out);
+                    g_manager_out_of_service = 1;
+                    pthread_mutex_unlock(&g_mutex_manager_out);
+                    discovery_service();
+                    break;
                 }
             }
         }
@@ -703,6 +799,13 @@ void* manager_interface_service(void *arg)
             {
                 send_wake_on_lan_packet(mac_address);
             }
+        }
+        pthread_mutex_lock(&g_mutex_manager_out);
+        int manager_out_of_service = g_manager_out_of_service;
+        pthread_mutex_unlock(&g_mutex_manager_out);
+        if (manager_out_of_service)
+        {
+            break;
         }
     }
     return nullptr;
